@@ -53,32 +53,33 @@ pub fn Argument(comptime Type: type) type {
         }
 
         /// Iterates through command-line arguments. This is used by argument
-        /// parsers. Because optional parsers may read a value that is not
-        /// correct, they need to put the value back for the next parser to
-        /// read. Such parsers achieve that by setting the property `current`
-        /// to the rejected value.
+        /// parsers. After a value has been read by a parser, it is saved in
+        /// `ValueIterator.current`. This is done to allow persistent access to
+        /// the value just in case the parser is an optional parser.
         ///
-        /// When `next` is called it will first try to read `current` before
-        /// reaching for `data`. If `current` is not `null`, its value will be
-        /// read and set to null. If current is `null`, the result is read from
-        /// `data`.
+        /// Optional parsers may succeed on invalid input. This means that if
+        /// the iterator does not save the value somewhere, the next parser will
+        /// read the wrong value. When a parser has accepted a value, it must
+        /// call `accept` to release the value. If a value is not released, the
+        /// next parser will read a value that has already been used by the
+        /// previous parser.
         pub const ValueIterator = struct {
             data: []const Value,
             current: ?Value = null,
 
             pub fn next(self: *ValueIterator) ?Value {
-                if (self.current) |value| {
-                    self.current = null;
-                    return value;
-                }
-
-                if (self.data.len > 0) {
+                return if (self.current) |value| current: {
+                    break :current value;
+                } else if (self.data.len > 0) has_data: {
                     const value = self.data[0];
                     self.data = self.data[1..];
-                    return value;
-                }
+                    self.current = value;
+                    break :has_data value;
+                } else null;
+            }
 
-                return null;
+            pub fn accept(self: *ValueIterator) void {
+                self.current = null;
             }
         };
 
@@ -110,8 +111,8 @@ pub const Enum = struct {
         };
     }
 
-    /// Creates an `Enum` `Argument` with default values for methods. It also
-    /// verfies that the number of variants in `Argument(Type).values` is at
+    /// Creates an `Enum` `Argument` and sets values for methods. It also
+    /// verifies that the number of variants in `Argument(Type).values` is at
     /// least that of `Type`. This may prevent ommiting variants.
     pub fn default(comptime Type: type, arg: Default(Type)) !Argument(Type) {
         comptime if (arg.values.len < @typeInfo(Type).@"enum".fields.len) {
@@ -124,13 +125,13 @@ pub const Enum = struct {
             .values = arg.values,
             .optional = arg.optional orelse false,
             .positional = arg.positional orelse false,
-            .parser = parseEnum,
+            .parser = parse,
             .block_formatter = formatDefaultBlock,
             .inline_formatter = formatDefaultInline,
         };
     }
 
-    pub fn parseEnum(
+    pub fn parse(
         comptime Type: type,
         self: *const Argument(Type),
         iterator: *Argument(Type).ValueIterator,
@@ -147,14 +148,17 @@ pub const Enum = struct {
                     value,
                 );
 
-                if (match) return val.parsed;
+                if (match) {
+                    iterator.accept();
+                    return val.parsed;
+                }
             }
         }
 
-        if (self.optional) {
-            iterator.current = it_value;
-            return error.MissingOptionalArgument;
-        } else return error.InvalidVariant;
+        return if (self.optional)
+            error.MissingOptionalArgument
+        else
+            error.InvalidVariant;
     }
 };
 
