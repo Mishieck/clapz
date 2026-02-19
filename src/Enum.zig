@@ -4,24 +4,22 @@ const testing = std.testing;
 const heap = std.heap;
 const mem = std.mem;
 
-const Arg = @import("./argument.zig").Argument;
+const arg = @import("./argument.zig");
+const Arg = arg.Argument;
 
 const Self = @This();
 
 /// Creates an `Enum` `Argument` and sets values for methods. It also
 /// verifies that the number of variants in `Arg(Type).values` is at
 /// least that of `Type`. This may prevent ommiting variants.
-pub fn default(comptime Type: type, arg: Arg(Type).Default) !Arg(Type) {
-    comptime if (arg.values.len < @typeInfo(Type).@"enum".fields.len) {
-        return error.NotEnoughVariants;
-    };
+pub fn default(comptime Type: type, argument: Arg(Type).Default) !Arg(Type) {
+    arg.verify(Type, argument.title, argument.values);
 
     return .{
-        .name = arg.name,
-        .description = arg.description,
-        .values = arg.values,
-        .optional = arg.optional orelse false,
-        .positional = arg.positional orelse false,
+        .title = argument.title,
+        .values = argument.values,
+        .optional = argument.optional orelse false,
+        .positional = argument.positional orelse false,
         .parser = parse,
         .value_formatter = formatValue,
     };
@@ -30,30 +28,19 @@ pub fn default(comptime Type: type, arg: Arg(Type).Default) !Arg(Type) {
 pub fn parse(
     comptime Type: type,
     self: *const Arg(Type),
-    iterator: *Arg(Type).ValueIterator,
+    value: arg.Value,
 ) anyerror!Type {
-    const it_value = iterator.next();
+    for (self.values) |val| {
+        var match = mem.eql(u8, val.string, value);
 
-    if (it_value) |value| {
-        for (self.values) |val| {
-            var match = mem.eql(u8, val.string, value);
+        match = match or val.short_string.len > 0 and mem.eql(
+            u8,
+            val.short_string,
+            value,
+        );
 
-            match = match or val.short_string.len > 0 and mem.eql(
-                u8,
-                val.short_string,
-                value,
-            );
-
-            if (match) {
-                iterator.accept();
-                return val.parsed;
-            }
-        } else if (self.optional) {
-            return error.MissingOptionalArgument;
-        } else return error.InvalidVariant;
-    } else if (self.optional) {
-        return error.MissingOptionalArgument;
-    } else return error.MissingArgument;
+        if (match) return val.parsed;
+    } else return error.InvalidValue;
 }
 
 pub fn formatValue(
@@ -71,8 +58,6 @@ test Self {
     const En = enum { first, second };
     const EnArg = Arg(En);
 
-    var it = EnArg.ValueIterator{ .data = &.{"--first"} };
-
     const first = EnArg.Values{
         .string = "--first",
         .short_string = "-f",
@@ -87,42 +72,20 @@ test Self {
     };
 
     const en = try default(En, .{
-        .name = "enum",
+        .title = "enum",
         .values = &.{ first, second },
         .positional = true,
     });
 
-    try testing.expectEqual(.first, try en.parse(&it));
-
-    it.data = &.{"-f"};
-    it.current = null;
-    try testing.expectEqual(.first, try en.parse(&it));
-
-    it.data = &.{"--second"};
-    it.current = null;
-    try testing.expectEqual(.second, try en.parse(&it));
-
-    it.data = &.{"wrong"};
-    it.current = null;
-    try testing.expectError(error.InvalidVariant, en.parse(&it));
-
-    const en2 = default(En, .{
-        .name = "enum",
-        .values = &.{first},
-        .positional = true,
-    });
-
-    try testing.expectError(error.NotEnoughVariants, en2);
-
-    it.data = &.{};
-    it.current = null;
+    try testing.expectEqual(.first, try en.parse("--first"));
+    try testing.expectEqual(.first, try en.parse("-f"));
+    try testing.expectEqual(.second, try en.parse("--second"));
+    try testing.expectError(error.InvalidValue, en.parse("wrong"));
 
     const en3 = try default(En, .{
-        .name = "en",
+        .title = "en",
         .values = &.{ first, second },
     });
-
-    try testing.expectError(error.MissingArgument, en3.parse(&it));
 
     const inline_en = try en.formatValue(allocator);
     defer allocator.free(inline_en);
@@ -133,7 +96,7 @@ test Self {
     try testing.expectEqualStrings("<en=enum>", inline_en3);
 
     const en4 = try default(En, .{
-        .name = "en",
+        .title = "en",
         .values = &.{ first, second },
         .optional = true,
     });

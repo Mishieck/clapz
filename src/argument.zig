@@ -4,17 +4,18 @@ const testing = std.testing;
 const heap = std.heap;
 const mem = std.mem;
 
+pub const Title = []const u8;
+pub const Description = []const u8;
+pub const Value = []const u8;
+
 pub fn Argument(comptime Type: type) type {
     return struct {
         const Arg = Argument(Type);
-        pub const Name = []const u8;
-        pub const Description = []const u8;
-        pub const Value = []const u8;
 
         pub const Parse = fn (
             comptime Type: type,
             self: *const Arg,
-            iterator: *ValueIterator,
+            value: Value,
         ) anyerror!Type;
 
         pub const Format = fn (
@@ -23,16 +24,16 @@ pub fn Argument(comptime Type: type) type {
             allocator: mem.Allocator,
         ) anyerror![]const u8;
 
-        name: Name,
-        description: Description = "",
+        title: Title,
         values: ValuesSlice,
         optional: bool,
         positional: bool,
         value_formatter: *const Format,
+        literal: bool = false,
         parser: *const Parse,
 
-        pub fn parse(self: *const Arg, iterator: *ValueIterator) !Type {
-            return self.parser(Type, self, iterator);
+        pub fn parse(self: *const Arg, value: Value) !Type {
+            return try self.parser(Type, self, value);
         }
 
         pub fn formatValue(self: *const Arg, gpa: mem.Allocator) ![]const u8 {
@@ -48,6 +49,7 @@ pub fn Argument(comptime Type: type) type {
             allocator: mem.Allocator,
             value: []const u8,
         ) ![]const u8 {
+            if (self.literal) return try allocator.dupe(u8, value);
             const enclosure = if (self.optional) "[]" else "<>";
 
             return try mem.concat(
@@ -62,13 +64,8 @@ pub fn Argument(comptime Type: type) type {
             allocator: mem.Allocator,
             value: []const u8,
         ) ![]const u8 {
-            if (self.positional) {
-                return try allocator.dupe(u8, value);
-            } else return try mem.concat(
-                allocator,
-                u8,
-                &.{ self.name, "=", value },
-            );
+            if (self.positional) return allocator.dupe(u8, self.title);
+            return try mem.concat(allocator, u8, &.{ self.title, "=", value });
         }
 
         /// Formats an argument as a block of documentation. Caller owns the
@@ -80,14 +77,15 @@ pub fn Argument(comptime Type: type) type {
                 rows.clearAndFree(gpa);
             }
 
-            const heading = try self.formatHeading(gpa);
+            const heading = try formatHeading(gpa, self.title);
             defer gpa.free(heading);
 
-            var max_left_col_size = heading.len;
+            var max_left_col_size: usize = 0;
 
             var docs = std.ArrayList(u8){};
             defer docs.clearAndFree(gpa);
             try docs.appendSlice(gpa, heading);
+            try docs.appendSlice(gpa, ":\n\n");
 
             var string = std.ArrayList(u8){};
             defer string.clearAndFree(gpa);
@@ -128,51 +126,14 @@ pub fn Argument(comptime Type: type) type {
 
             return try gpa.dupe(u8, docs.items);
         }
-
-        /// Formats the heading of the documentation.
-        pub fn formatHeading(
-            self: *const Arg,
-            gpa: mem.Allocator,
-        ) ![]const u8 {
-            const capitalized = try if (self.name.len > 0) mem.concat(
-                gpa,
-                u8,
-                &.{ &.{std.ascii.toUpper(self.name[0])}, self.name[1..] },
-            ) else gpa.dupe(u8, "");
-            defer gpa.free(capitalized);
-
-            return try mem.concat(gpa, u8, &.{ capitalized, ":\n\n" });
-        }
-
-        /// Iterates through command-line arguments. This is used by argument
-        /// parsers. After a value has been read by a parser, it is saved in
-        /// `ValueIterator.current`. This is done to allow persistent access to
-        /// the value just in case the parser is an optional parser.
-        ///
-        /// Optional parsers may succeed on invalid input. This means that if
-        /// the iterator does not save the value somewhere, the next parser will
-        /// read the wrong value. When a parser has accepted a value, it must
-        /// call `accept` to release the value. If a value is not released, the
-        /// next parser will read a value that has already been used by the
-        /// previous parser.
-        pub const ValueIterator = struct {
-            data: []const Value,
-            current: ?Value = null,
-
-            pub fn next(self: *ValueIterator) ?Value {
-                return if (self.current) |value| current: {
-                    break :current value;
-                } else if (self.data.len > 0) has_data: {
-                    const value = self.data[0];
-                    self.data = self.data[1..];
-                    self.current = value;
-                    break :has_data value;
-                } else null;
-            }
-
-            pub fn accept(self: *ValueIterator) void {
-                self.current = null;
-            }
+        /// A partial of `Argument`. The struct excludes methods and makes
+        /// `optional` and `positional` optional.
+        pub const Default = struct {
+            title: Title,
+            description: Description = "",
+            values: Arg.ValuesSlice,
+            optional: ?bool = null,
+            positional: ?bool = null,
         };
 
         pub const ValuesSlice = []const Values;
@@ -185,15 +146,67 @@ pub fn Argument(comptime Type: type) type {
             parsed: Type,
             description: Description = "",
         };
-
-        /// A partial of `Argument`. The struct excludes methods and makes
-        /// `optional` and `positional` optional.
-        pub const Default = struct {
-            name: Arg.Name,
-            description: Arg.Description = "",
-            values: Arg.ValuesSlice,
-            optional: ?bool = null,
-            positional: ?bool = null,
-        };
     };
+}
+
+pub fn verify(
+    comptime Type: type,
+    comptime title: Title,
+    comptime values: Argument(Type).ValuesSlice,
+) void {
+    comptime {
+        if (title.len == 0) @compileError("Empty title!\n");
+
+        if (values.len == 0) @compileError(
+            "Empty values slice in argument '" ++ title ++ "'!\n",
+        );
+    }
+}
+
+/// Formats the heading of the documentation. The heading is formatted
+/// using Title Case.
+pub fn formatHeading(
+    gpa: mem.Allocator,
+    value: []const u8,
+) ![]const u8 {
+    var title = std.ArrayList([]const u8){};
+    defer {
+        for (title.items) |word| gpa.free(word);
+        title.deinit(gpa);
+    }
+
+    var words = mem.splitAny(u8, value, "-_");
+
+    while (words.next()) |word| {
+        const capitalized = try if (word.len > 0) mem.concat(
+            gpa,
+            u8,
+            &.{ &.{std.ascii.toUpper(word[0])}, word[1..] },
+        ) else gpa.dupe(u8, "");
+
+        try title.append(gpa, capitalized);
+    }
+
+    const joined = try mem.join(gpa, " ", title.items);
+
+    return joined;
+}
+
+test formatHeading {
+    const allocator = testing.allocator;
+
+    const kebab = "command-arg";
+    var actual = try formatHeading(allocator, kebab);
+    try testing.expectEqualStrings("Command Arg", actual);
+
+    const snake = "command_arg";
+    allocator.free(actual);
+    actual = try formatHeading(allocator, snake);
+    try testing.expectEqualStrings("Command Arg", actual);
+
+    const kebab_and_snake = "mixed-command_arg";
+    allocator.free(actual);
+    actual = try formatHeading(allocator, kebab_and_snake);
+    try testing.expectEqualStrings("Mixed Command Arg", actual);
+    allocator.free(actual);
 }

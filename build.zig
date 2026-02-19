@@ -6,9 +6,22 @@ pub fn build(b: *std.Build) void {
 
     const mod = b.addModule("zarg", .{
         .root_source_file = b.path("src/root.zig"),
-
         .target = target,
     });
+
+    const iterator_example = b.addExecutable(.{
+        .name = "zarg",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/iterator.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zarg", .module = mod },
+            },
+        }),
+    });
+
+    b.installArtifact(iterator_example);
 
     const exe = b.addExecutable(.{
         .name = "zarg",
@@ -26,16 +39,19 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(exe);
 
-    const run_step = b.step("run", "Run the app");
-
+    const run_step = b.step("run", "Run the app.");
     const run_cmd = b.addRunArtifact(exe);
     run_step.dependOn(&run_cmd.step);
-
     run_cmd.step.dependOn(b.getInstallStep());
 
     const mod_tests = b.addTest(.{ .root_module = mod });
-
     const run_mod_tests = b.addRunArtifact(mod_tests);
+
+    const iterator_example_run_step = b.step("run-example-iterator", "Run the iterator example.");
+    const iterator_example_run_cmd = b.addRunArtifact(iterator_example);
+    iterator_example_run_step.dependOn(&iterator_example_run_cmd.step);
+    iterator_example_run_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| iterator_example_run_cmd.addArgs(args);
 
     if (b.args) |args| run_cmd.addArgs(args);
 

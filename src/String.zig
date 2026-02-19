@@ -4,18 +4,21 @@ const testing = std.testing;
 const heap = std.heap;
 const mem = std.mem;
 
-const Arg = @import("./argument.zig").Argument;
+const arg = @import("./argument.zig");
+const Arg = arg.Argument;
 
 const Self = @This();
+pub const Value = []const u8;
 
 /// Creates an string `Argument` and sets values for methods.
-pub fn default(comptime Type: type, arg: Arg(Type).Default) !Arg(Type) {
+pub fn default(argument: Arg(Value).Default) !Arg(Value) {
+    arg.verify(Value, argument.title, argument.values);
+
     return .{
-        .name = arg.name,
-        .description = arg.description,
-        .values = arg.values,
-        .optional = arg.optional orelse false,
-        .positional = arg.positional orelse false,
+        .title = argument.title,
+        .values = argument.values,
+        .optional = argument.optional orelse false,
+        .positional = argument.positional orelse false,
         .parser = parse,
         .value_formatter = formatValue,
     };
@@ -24,16 +27,10 @@ pub fn default(comptime Type: type, arg: Arg(Type).Default) !Arg(Type) {
 pub fn parse(
     comptime Type: type,
     self: *const Arg(Type),
-    iterator: *Arg(Type).ValueIterator,
+    value: arg.Value,
 ) anyerror!Type {
-    const it_value = iterator.next();
-
-    if (it_value) |value| {
-        iterator.accept();
-        return value;
-    } else if (self.optional) {
-        return error.MissingOptionalArgument;
-    } else return error.MissingArgument;
+    _ = self;
+    return value;
 }
 
 pub fn formatValue(
@@ -48,30 +45,19 @@ pub fn formatValue(
 test Self {
     const allocator = testing.allocator;
 
-    const StringArg = Arg([]const u8);
-
-    var it = StringArg.ValueIterator{ .data = &.{"value"} };
-
-    const str = try default([]const u8, .{
-        .name = "",
-        .values = &.{},
+    const str = try default(.{
+        .title = "command",
+        .values = &.{.{
+            .string = "--value",
+            .short_string = "-v",
+            .parsed = "",
+        }},
         .positional = true,
     });
 
-    try testing.expectEqual("value", try str.parse(&it));
-
-    it.data = &.{};
-    it.current = null;
-
-    const str2 = try default([]const u8, .{
-        .name = "",
-        .values = &.{},
-        .positional = true,
-    });
-
-    try testing.expectError(error.MissingArgument, str2.parse(&it));
+    try testing.expectEqual("value", try str.parse("value"));
 
     const inline_str = try str.formatValue(allocator);
     defer allocator.free(inline_str);
-    try testing.expectEqualStrings("<string>", inline_str);
+    try testing.expectEqualStrings("<command>", inline_str);
 }
