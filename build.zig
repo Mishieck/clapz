@@ -4,27 +4,41 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const mod = b.addModule("zarg", .{
+    const mod = b.addModule("clapz", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
     });
 
-    const iterator_example = b.addExecutable(.{
-        .name = "zarg",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/iterator.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "zarg", .module = mod },
-            },
-        }),
-    });
+    const examples = [_][]const u8{ "main", "simple" };
 
-    b.installArtifact(iterator_example);
+    inline for (examples) |name| {
+        const example = b.addExecutable(.{
+            .name = "exmple-" ++ name,
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("examples/" ++ name ++ ".zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "clapz", .module = mod },
+                },
+            }),
+        });
+
+        b.installArtifact(example);
+
+        const example_run_step = b.step(
+            "run-" ++ name ++ "-example",
+            "Run " ++ name ++ " example.",
+        );
+
+        const example_run_cmd = b.addRunArtifact(example);
+        example_run_step.dependOn(&example_run_cmd.step);
+        example_run_cmd.step.dependOn(b.getInstallStep());
+        if (b.args) |args| example_run_cmd.addArgs(args);
+    }
 
     const exe = b.addExecutable(.{
-        .name = "zarg",
+        .name = "clapz",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
 
@@ -32,7 +46,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
 
             .imports = &.{
-                .{ .name = "zarg", .module = mod },
+                .{ .name = "clapz", .module = mod },
             },
         }),
     });
@@ -46,12 +60,6 @@ pub fn build(b: *std.Build) void {
 
     const mod_tests = b.addTest(.{ .root_module = mod });
     const run_mod_tests = b.addRunArtifact(mod_tests);
-
-    const iterator_example_run_step = b.step("run-example-iterator", "Run the iterator example.");
-    const iterator_example_run_cmd = b.addRunArtifact(iterator_example);
-    iterator_example_run_step.dependOn(&iterator_example_run_cmd.step);
-    iterator_example_run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| iterator_example_run_cmd.addArgs(args);
 
     if (b.args) |args| run_cmd.addArgs(args);
 

@@ -18,7 +18,7 @@ pub fn default(argument: Arg(Value).Default) !Arg(Value) {
         .title = argument.title,
         .values = argument.values,
         .optional = argument.optional orelse false,
-        .positional = argument.positional orelse false,
+        .positional = true,
         .literal = true,
         .parser = parse,
         .value_formatter = formatValue,
@@ -49,12 +49,12 @@ pub fn formatValue(
     const short = try if (literal.short_string.len > 0) mem.concat(
         allocator,
         u8,
-        &.{ "|", literal.short_string },
+        &.{ literal.short_string, "|" },
     ) else allocator.dupe(u8, "");
 
     defer allocator.free(short);
 
-    return try mem.concat(allocator, u8, &.{ literal.string, short });
+    return try mem.concat(allocator, u8, &.{ short, literal.string });
 }
 
 test Self {
@@ -74,5 +74,5 @@ test Self {
 
     const inline_const = try literal.formatValue(allocator);
     defer allocator.free(inline_const);
-    try testing.expectEqualStrings("command", inline_const);
+    try testing.expectEqualStrings("c|command", inline_const);
 }

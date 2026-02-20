@@ -2,7 +2,7 @@ const std = @import("std");
 const debug = std.debug;
 const testing = std.testing;
 const heap = std.heap;
-const zarg = @import("zarg");
+const clapz = @import("clapz");
 
 pub fn main() !void {
     var gpa = heap.GeneralPurposeAllocator(.{}){};

@@ -9,6 +9,7 @@ pub const Enum = @import("Enum.zig");
 pub const String = @import("String.zig");
 pub const Literal = @import("Literal.zig");
 pub const Iterator = @import("./Iterator.zig");
+pub const documentation = @import("./documentation.zig");
 
 test {
     _ = @import("argument.zig");

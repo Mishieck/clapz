@@ -64,6 +64,7 @@ pub fn Argument(comptime Type: type) type {
             allocator: mem.Allocator,
             value: []const u8,
         ) ![]const u8 {
+            if (self.literal) return allocator.dupe(u8, value);
             if (self.positional) return allocator.dupe(u8, self.title);
             return try mem.concat(allocator, u8, &.{ self.title, "=", value });
         }

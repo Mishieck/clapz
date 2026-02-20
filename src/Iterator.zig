@@ -24,21 +24,30 @@ const Enum = @import("./Enum.zig");
 
 const Self = @This();
 
-strings: *process.ArgIterator,
-current_string: ?[:0]const u8 = null,
+strings: []const [:0]u8,
+index: usize = 0,
+
+/// Creates an iterator of arguments. Call `deinit` to free memory of process
+/// arguments.
+pub fn init(gpa: mem.Allocator) !Self {
+    const strings = try process.argsAlloc(gpa);
+    return .{ .strings = strings };
+}
+
+/// Frees process arguments memory.
+pub fn deinit(self: *Self, gpa: mem.Allocator) void {
+    process.argsFree(gpa, self.strings);
+}
 
 pub fn next(self: *Self, comptime Type: type, argument: Arg(Type)) !if (argument.optional) ?Type else Type {
-    const string = if (self.current_string) |str| str else current: {
-        const value = self.strings.next();
-        self.current_string = value;
-        break :current value;
-    };
+    const is_within_bounds = self.index < self.strings.len;
+    const string = if (is_within_bounds) self.strings[self.index] else null;
 
     if (string) |value| {
         const result = argument.parse(value);
 
         if (result) |val| {
-            self.current_string = null;
+            self.index += 1;
             return val;
         } else |err| {
             if (argument.optional) {
@@ -53,17 +62,16 @@ pub fn next(self: *Self, comptime Type: type, argument: Arg(Type)) !if (argument
 }
 
 test {
-    var arg_it = process.args();
-    var it = Self{ .strings = &arg_it };
-
-    while (arg_it.next()) |v| debug.print("arg: {s}\n", .{v});
+    var it = Self{
+        .strings = &.{ "./src/Iterator.zig", "run", "./src/main.ext" },
+    };
 
     const command = try String.default(.{
-        .title = "zig",
+        .title = "tool",
         .values = &.{.{
-            .string = "zig",
+            .string = "tool",
             .parsed = "",
-            .description = "The command for running zig.",
+            .description = "The command for running tool.",
         }},
         .positional = true,
     });
@@ -106,17 +114,17 @@ test {
             .parsed = "",
             .description = "The path of the source file to run.",
         }},
+        .optional = true,
         .positional = true,
     });
 
     const exe_path = try it.next(String.Value, command);
-    var buffer: [1024]u8 = undefined;
-    const expected_exe_path = try std.fs.selfExePath(&buffer);
-    try testing.expectStringEndsWith(expected_exe_path, exe_path[1..]);
+    try testing.expectStringEndsWith("./src/Iterator.zig", exe_path);
 
     const sub_command_variant = try it.next(SubCommand, sub_command);
     try testing.expectEqual(.run, sub_command_variant);
 
     const path_value = try it.next(String.Value, path);
-    try testing.expectEqual("./src/main.zig", path_value);
+    try testing.expect(path_value != null);
+    try testing.expectEqual("./src/main.ext", path_value.?);
 }
