@@ -6,18 +6,9 @@ const fs = std.fs;
 
 const clapz = @import("clapz");
 const arg = clapz.argument;
-const String = clapz.String;
-const Enum = clapz.Enum;
-const Literal = clapz.Literal;
 const Arg = arg.Argument;
 const Iterator = clapz.Iterator;
 const docs = clapz.documentation;
-
-const SubCommand = enum {
-    build,
-    help,
-    run,
-};
 
 pub fn main() !void {
     var gpa = heap.GeneralPurposeAllocator(.{}){};
@@ -25,126 +16,91 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     var args = try Iterator.init(allocator);
-    defer args.deinit(allocator);
-
-    // For the first argument, the path of the executable.
-    const tool = try String.default(.{
-        .title = "tool",
-        .values = &.{.{
-            .string = "tool",
-            .parsed = "",
-            .description = "The command for running tool.",
-        }},
-        .positional = true,
-    });
-
-    // The sub-commands of `tool`, including the `--help` argument.
-    const sub_command = try Enum.default(
-        SubCommand,
-        .{
-            .title = "sub-command",
-            .values = &.{
-                .{
-                    .string = "build",
-                    .parsed = .build,
-                    .description = "Build source files.",
-                },
-                .{
-                    .string = "--help",
-                    .short_string = "-h",
-                    .parsed = .help,
-                    .description = "Display these instructions.",
-                },
-                .{
-                    .string = "run",
-                    .parsed = .run,
-                    .description = "Run a source file.",
-                },
-            },
-            .positional = true,
-        },
-    );
-
-    // Path of file to run a command on.
-    const path = try String.default(.{
-        .title = "path",
-        .values = &.{.{
-            .string = "path",
-            .parsed = "",
-            .description = "Path of file to build or run.",
-        }},
-        .optional = true,
-        .positional = true,
-    });
+    defer args.deinit();
 
     // Discard the path of this executable.
-    _ = try args.next(String.Value, tool);
+    const tool_value = try args.next(Tool.Parsed, tool);
+    defer allocator.destroy(tool_value);
 
-    const sub_command_value = try args.next(SubCommand, sub_command);
+    const sub_command_value = try args.next(SubCommandArg.Parsed, sub_command);
+    defer allocator.destroy(sub_command_value);
 
-    try switch (sub_command_value) {
-        .build => build(allocator, &args, path),
-        .help => help(allocator, sub_command, path),
-        .run => run(allocator, &args, path),
+    try switch (sub_command_value.*) {
+        .build => build(allocator, &args),
+        .@"--help", .@"-h" => help(allocator),
+        .run => run(allocator, &args),
     };
 }
 
-fn build(gpa: mem.Allocator, args: *Iterator, path: Arg(String.Value)) !void {
-    _ = gpa;
-    const path_value = try args.next(String.Value, path);
-    debug.print("Building {s}\n", .{path_value orelse "all"});
+const Tool = Arg([]const u8);
+const SubCommandArg = Arg(SubCommand);
+const SubCommand = enum { build, @"--help", @"-h", run };
+const Path = Arg([]const u8);
+
+// For the first argument, the path of the executable.
+const tool = Tool{
+    .name = .{ "tool", "" },
+    .syntax = .{ .one = .{ .positional = .string } },
+    .description = "The command for running tool.",
+    .value_descriptions = &.{},
+    .examples = &.{"tool"},
+};
+
+// The sub-commands of `tool`, including the `--help` argument.
+const sub_command = SubCommandArg{
+    .name = .{ "sub-command", "" },
+    .syntax = .{ .one = .{ .positional = .variant } },
+    .description = "A sub-command.",
+    .value_descriptions = &.{
+        .{ "build", "Build source files." },
+        .{ "run", "Run a source file." },
+    },
+    .examples = &.{ "build", "run" },
+};
+
+// Path of file to run a command on.
+const path = Path{
+    .name = .{ "path", "" },
+    .syntax = .{ .zero_or_one = .{ .positional = .string } },
+    .description = "Path of file to build or run.",
+    .value_descriptions = &.{},
+    .examples = &.{"./src/main.ext"},
+};
+
+fn build(gpa: mem.Allocator, args: *Iterator) !void {
+    const path_value = try args.next(Path.Parsed, path);
+    defer if (path_value) |v| gpa.destroy(v);
+    debug.print("Building {s}\n", .{if (path_value) |v| v.* else "all"});
 }
 
-fn run(gpa: mem.Allocator, args: *Iterator, path: Arg(String.Value)) !void {
-    _ = gpa;
-    const path_value = try args.next(String.Value, path);
-    debug.print("Running {s}\n", .{path_value.?});
+fn run(gpa: mem.Allocator, args: *Iterator) !void {
+    const path_value = try args.next(Path.Parsed, path);
+    defer if (path_value) |v| gpa.destroy(v);
+    debug.print("Running {s}\n", .{if (path_value) |v| v.* else "main"});
 }
 
-fn help(gpa: mem.Allocator, sub_command: Arg(SubCommand), path: Arg(String.Value)) !void {
-    const tool = try Literal.default(.{
-        .title = "tool",
-        .values = &.{.{ .string = "tool", .parsed = "" }},
-    });
+fn help(gpa: mem.Allocator) !void {
+    const LiteralTool = Arg([]const u8);
+    const literal_tool = LiteralTool{
+        .name = tool.name,
+        .syntax = .literal,
+        .description = tool.description,
+        .value_descriptions = &.{},
+        .examples = tool.examples,
+    };
 
-    const help_arg = try Literal.default(.{
-        .title = "help",
-        .values = &.{.{
-            .string = "--help",
-            .short_string = "-h",
-            .parsed = "",
-        }},
-    });
+    const Help = Arg([]const u8);
+    const help_arg = Help{
+        .name = .{ "--help", "-h" },
+        .syntax = .literal,
+        .description = "Display these instructions.",
+        .value_descriptions = &.{},
+        .examples = &.{ "--help", "-h" },
+    };
 
-    const build_arg = try Literal.default(.{
-        .title = "build",
-        .values = &.{.{ .string = "build", .parsed = "" }},
-    });
-
-    const run_arg = try Literal.default(.{
-        .title = "run",
-        .values = &.{.{ .string = "run", .parsed = "" }},
-    });
-
-    // All of the fields are required
     const docs_data = .{
-        // Usage docs. Each slice of arguments will be printed as a line.
-        .usage = &.{
-            &.{ tool, build_arg, path },
-            &.{ tool, run_arg, path },
-            &.{ tool, help_arg },
-        },
-
-        // Arguments that need to be documented on their own.
-        .arguments = &.{ sub_command, path },
-
-        // Examples of usage. This list may be empty.
-        .examples = &.{
-            "tool build ./src/main.ext",
-            "tool build",
-            "tool run ./src/main.ext",
-            "tool --help",
-        },
+        &.{ literal_tool, help_arg },
+        &.{ literal_tool, sub_command, path },
     };
 
     var stdout = fs.File.stdout();
